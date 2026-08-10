@@ -5,10 +5,8 @@ from google import genai
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
-
 # Load .env
 load_dotenv()
-
 
 # Gemini API Key
 api_key = os.getenv("GEMINI_API_KEY")
@@ -16,10 +14,8 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY is not set in .env")
 
-
 # Gemini Client
 client = genai.Client(api_key=api_key)
-
 
 # FastAPI
 app = FastAPI(
@@ -27,19 +23,18 @@ app = FastAPI(
     version="1.0.0"
 )
 
-
 # CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:3001",
+        "https://enterprise-ai-business-automation-p-gamma.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # Chat request model
 class ChatRequest(BaseModel):
