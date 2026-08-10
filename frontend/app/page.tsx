@@ -1,4 +1,4 @@
-import Navbar from "./components/Navbar";
+﻿import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import HowWeHelp from "./components/HowWeHelp";
 import RealBusinessSolutions from "./components/RealBusinessSolutions";
@@ -7,6 +7,7 @@ import FinalCTA from "./components/FinalCTA";
 import FAQ from "./components/FAQ";
 import Footer from "./components/Footer";
 import AIChat from "./components/AIChat";
+import KnowledgeBase from "./components/KnowledgeBase";
 
 export default function Home() {
   return (
@@ -17,7 +18,8 @@ export default function Home() {
       <RealBusinessSolutions />
       <AutomationSystems />
 
-      <AIChat />
+      <KnowledgeBase />
+  <AIChat />
 
       <FinalCTA />
       <FAQ />

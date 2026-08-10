@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+﻿from fastapi import FastAPI
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from google import genai
@@ -40,6 +40,10 @@ app.add_middleware(
 
 # Chat request model
 class ChatRequest(BaseModel):
+
+
+
+
     message: str
 class DocumentRequest(BaseModel):
     content: str
@@ -47,13 +51,17 @@ class DocumentRequest(BaseModel):
 class SearchRequest(BaseModel):
     query: str
     limit: int = 3
+
+
+class RagChatRequest(BaseModel):
+    query: str
+    session_id: str = "default"
 # Home
 @app.get("/")
 def home():
     return {
         "message": "Enterprise AI Business Automation Platform is Running"
     }
-
 
 # Test AI
 @app.get("/test-ai")
@@ -252,23 +260,100 @@ def search(request: SearchRequest):
             "status": "error",
             "message": str(e)
         }
-        # RAG Chat
-@app.post("/rag-chat")
-def rag_chat(request: SearchRequest):
+# Chat History
+@app.get("/chat-history/{session_id}")
+def chat_history(session_id: str):
     try:
-        # Create embedding for user's question
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT role, message, created_at
+                    FROM chat_messages
+                    WHERE session_id = %s
+                    ORDER BY created_at ASC;
+                    """,
+                    (session_id,)
+                )
+
+                rows = cur.fetchall()
+
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "messages": [
+                {
+                    "role": row[0],
+                    "content": row[1],
+                    "created_at": row[2].isoformat()
+                }
+                for row in rows
+            ]
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+@app.post("/rag-chat")
+def rag_chat(request: RagChatRequest):
+    try:
+        database_url = os.getenv("DATABASE_URL")
+
+        # -----------------------------------
+        # 1. Save user message
+        # -----------------------------------
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO chat_messages
+                    (session_id, role, message)
+                    VALUES (%s, %s, %s);
+                    """,
+                    (
+                        request.session_id,
+                        "user",
+                        request.query
+                    )
+                )
+
+                # -----------------------------------
+                # 2. Get previous conversation
+                # -----------------------------------
+                cur.execute(
+                    """
+                    SELECT role, message
+                    FROM chat_messages
+                    WHERE session_id = %s
+                    ORDER BY created_at ASC
+                    LIMIT 20;
+                    """,
+                    (request.session_id,)
+                )
+
+                history_rows = cur.fetchall()
+
+            conn.commit()
+
+        # -----------------------------------
+        # 3. Create embedding for question
+        # -----------------------------------
         result = client.models.embed_content(
             model="gemini-embedding-2",
             contents=request.query
         )
-
         query_embedding = result.embeddings[0].values
 
-        # Convert embedding to pgvector format
-        embedding_string = "[" + ",".join(map(str, query_embedding)) + "]"
+        embedding_string = "[" + ",".join(
+            map(str, query_embedding)
+        ) + "]"
 
-        # Find relevant documents
-        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+        # -----------------------------------
+        # 4. Search relevant documents
+        # -----------------------------------
+        with psycopg.connect(database_url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -289,19 +374,17 @@ def rag_chat(request: SearchRequest):
 
                 rows = cur.fetchall()
 
-        if not rows:
-            return {
-                "status": "success",
-                "answer": "I could not find any relevant information.",
-                "sources": []
-            }
-
-        # Build context
+        # -----------------------------------
+        # 5. Build RAG context
+        # -----------------------------------
         context = ""
         sources = []
 
         for row in rows:
-            context += f"Document {row[0]}:\n{row[1]}\n\n"
+            context += (
+                f"Document {row[0]}:\n"
+                f"{row[1]}\n\n"
+            )
 
             sources.append({
                 "id": row[0],
@@ -309,19 +392,39 @@ def rag_chat(request: SearchRequest):
                 "distance": float(row[3])
             })
 
-        # Ask Gemini using retrieved context
+        # -----------------------------------
+        # 6. Build conversation history
+        # -----------------------------------
+        conversation_history = ""
+
+        for role, message in history_rows:
+            conversation_history += (
+                f"{role}: {message}\n"
+            )
+
+        # -----------------------------------
+        # 7. Send memory + RAG context to Gemini
+        # -----------------------------------
         prompt = f"""
 You are an AI assistant for the Enterprise AI Business Automation Platform.
 
-Answer the user's question using ONLY the information provided in the context below.
+Use the provided documents and conversation history to answer the user's question.
 
-If the answer is not present in the context, say:
+Rules:
+- Use the documents as the primary source of business knowledge.
+- Use conversation history to understand previous messages.
+- If the documents do not contain enough information, say:
 "I don't have enough information in the provided documents."
+- Do not invent company-specific information.
+- Be clear and helpful.
 
-Context:
+Conversation history:
+{conversation_history}
+
+Relevant documents:
 {context}
 
-User question:
+Current user question:
 {request.query}
 """
 
@@ -330,10 +433,36 @@ User question:
             contents=prompt
         )
 
+        answer = response.text
+
+        # -----------------------------------
+        # 8. Save AI response to memory
+        # -----------------------------------
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO chat_messages
+                    (session_id, role, message)
+                    VALUES (%s, %s, %s);
+                    """,
+                    (
+                        request.session_id,
+                        "assistant",
+                        answer
+                    )
+                )
+
+            conn.commit()
+
+        # -----------------------------------
+        # 9. Return response
+        # -----------------------------------
         return {
             "status": "success",
-            "answer": response.text,
-            "sources": sources
+            "answer": answer,
+            "sources": sources,
+            "session_id": request.session_id
         }
 
     except Exception as e:
