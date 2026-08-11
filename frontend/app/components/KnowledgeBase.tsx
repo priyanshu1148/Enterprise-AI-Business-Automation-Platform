@@ -16,7 +16,7 @@ export default function KnowledgeBase() {
 
     try {
       const res = await fetch(
-        "https://enterprise-ai-business-automation.onrender.com/add-document",
+        "https://enterprise-ai-backend-v1r7.onrender.com/add-document",
         {
           method: "POST",
           headers: {
@@ -102,3 +102,4 @@ export default function KnowledgeBase() {
     </section>
   );
 }
+
