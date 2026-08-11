@@ -28,7 +28,7 @@ export default function AIChat() {
 
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/chat-history/${id}`
+        `https://enterprise-ai-business-automation.onrender.com/chat-history/${id}`
       );
 
       const data = await res.json();
@@ -98,7 +98,7 @@ export default function AIChat() {
 
     try {
       const res = await fetch(
-        "http://127.0.0.1:8000/rag-chat",
+        "https://enterprise-ai-business-automation.onrender.com/rag-chat",
         {
           method: "POST",
           headers: {
@@ -211,6 +211,7 @@ export default function AIChat() {
     </section>
   );
 }
+
 
 
 
