@@ -1,11 +1,14 @@
 ﻿"use client";
 
+import { useEffect, useState } from "react";
+
 type Message = {
   role: "user" | "assistant";
   content: string;
 };
 
-import { useEffect, useState } from "react";
+const API_BASE =
+  "https://enterprise-ai-business-automation.onrender.com";
 
 export default function AIChat() {
   const [message, setMessage] = useState("");
@@ -16,6 +19,9 @@ export default function AIChat() {
   const [listening, setListening] = useState(false);
 
   useEffect(() => {
+    loadChatHistory();
+  }, []);
+
   const loadChatHistory = async () => {
     let id = localStorage.getItem("ai_session_id");
 
@@ -28,26 +34,45 @@ export default function AIChat() {
 
     try {
       const res = await fetch(
-        `https://enterprise-ai-business-automation.onrender.com/chat-history/${id}`
+        `${API_BASE}/chat-history/${id}`
       );
 
       const data = await res.json();
 
       if (data.status === "success") {
-        setMessages(
-          data.messages.map((item: any) => ({
-            role: item.role === "user" ? "user" : "assistant",
-            content: item.content,
-          }))
-        );
+        const history = data.messages.map((item: any) => ({
+          role: item.role === "user" ? "user" : "assistant",
+          content: item.content,
+        }));
+
+        setMessages(history);
+
+        const lastAssistant = [...history]
+          .reverse()
+          .find((item) => item.role === "assistant");
+
+        if (lastAssistant) {
+          setResponse(lastAssistant.content);
+        }
       }
     } catch (error) {
       console.error("Chat history error:", error);
     }
   };
 
-  loadChatHistory();
-}, []);
+  const newChat = () => {
+    window.speechSynthesis?.cancel();
+
+    const newId = crypto.randomUUID();
+
+    localStorage.setItem("ai_session_id", newId);
+
+    setSessionId(newId);
+    setMessages([]);
+    setMessage("");
+    setResponse("");
+    setLoading(false);
+  };
 
   const startVoiceInput = () => {
     const SpeechRecognition =
@@ -76,8 +101,6 @@ export default function AIChat() {
 
       if (event.error === "no-speech") {
         setMessage("");
-        setListening(false);
-        return;
       }
 
       setListening(false);
@@ -91,21 +114,31 @@ export default function AIChat() {
   };
 
   const sendMessage = async () => {
-    if (!message.trim() || !sessionId) return;
+    const query = message.trim();
+
+    if (!query || !sessionId || loading) return;
 
     setLoading(true);
     setResponse("");
 
+    const userMessage: Message = {
+      role: "user",
+      content: query,
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setMessage("");
+
     try {
       const res = await fetch(
-        "https://enterprise-ai-business-automation.onrender.com/rag-chat",
+        `${API_BASE}/rag-chat`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            query: message,
+            query,
             session_id: sessionId,
           }),
         }
@@ -114,15 +147,27 @@ export default function AIChat() {
       const data = await res.json();
 
       if (!res.ok || data.status === "error") {
-        throw new Error(data.message || "Something went wrong");
+        throw new Error(
+          data.message || "Something went wrong"
+        );
       }
 
-      setResponse(data.answer);
+      const answer = data.answer || "No answer received.";
+
+      setResponse(answer);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: answer,
+        },
+      ]);
 
       if ("speechSynthesis" in window) {
         window.speechSynthesis.cancel();
 
-        const speech = new SpeechSynthesisUtterance(data.answer);
+        const speech = new SpeechSynthesisUtterance(answer);
         speech.lang = "en-IN";
         speech.rate = 1;
         speech.pitch = 1;
@@ -131,7 +176,19 @@ export default function AIChat() {
       }
     } catch (error) {
       console.error("RAG Chat Error:", error);
-      setResponse("AI से connect नहीं हो पाया। Backend check करें.");
+
+      const errorMessage =
+        "AI से connect नहीं हो पाया। Backend check करें.";
+
+      setResponse(errorMessage);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: errorMessage,
+        },
+      ]);
     } finally {
       setLoading(false);
     }
@@ -157,6 +214,47 @@ export default function AIChat() {
 
         <div className="border border-gray-800 rounded-2xl p-5 bg-gray-950">
 
+          <div className="flex justify-between items-center mb-4">
+            <p className="text-gray-400 text-sm">
+              Chat Session
+            </p>
+
+            <button
+              type="button"
+              onClick={newChat}
+              className="px-4 py-2 rounded-lg border border-gray-700 hover:bg-gray-900 text-sm font-semibold"
+            >
+              + New Chat
+            </button>
+          </div>
+
+          {messages.length > 0 && (
+            <div className="mb-5 space-y-3 max-h-[420px] overflow-y-auto pr-2">
+
+              {messages.map((item, index) => (
+                <div
+                  key={index}
+                  className={`rounded-xl p-4 border ${
+                    item.role === "user"
+                      ? "bg-blue-600/10 border-blue-500/30"
+                      : "bg-gray-900 border-gray-800"
+                  }`}
+                >
+                  <p className="text-xs text-blue-400 mb-1">
+                    {item.role === "user"
+                      ? "You"
+                      : "AI Assistant"}
+                  </p>
+
+                  <p className="text-gray-200 whitespace-pre-wrap">
+                    {item.content}
+                  </p>
+                </div>
+              ))}
+
+            </div>
+          )}
+
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
@@ -172,7 +270,9 @@ export default function AIChat() {
               disabled={loading}
               className="px-6 py-3 rounded-xl border border-gray-700 hover:bg-gray-900 disabled:opacity-50 font-semibold"
             >
-              {listening ? "🎙️ Listening..." : "🎤 Speak"}
+              {listening
+                ? "🎙️ Listening..."
+                : "🎤 Speak"}
             </button>
 
             <button
@@ -181,12 +281,16 @@ export default function AIChat() {
               disabled={loading || !sessionId}
               className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 font-semibold"
             >
-              {loading ? "Thinking..." : "Send Message →"}
+              {loading
+                ? "Thinking..."
+                : "Send Message →"}
             </button>
 
             <button
               type="button"
-              onClick={() => window.speechSynthesis.cancel()}
+              onClick={() =>
+                window.speechSynthesis?.cancel()
+              }
               className="px-6 py-3 rounded-xl border border-gray-700 hover:bg-gray-900 font-semibold"
             >
               🔇 Stop Voice
@@ -197,7 +301,7 @@ export default function AIChat() {
           {response && (
             <div className="mt-6 p-5 rounded-xl bg-gray-900 border border-gray-800">
               <p className="text-sm text-blue-400 mb-2">
-                AI Response
+                Latest AI Response
               </p>
 
               <p className="text-gray-200 whitespace-pre-wrap">
@@ -211,10 +315,3 @@ export default function AIChat() {
     </section>
   );
 }
-
-
-
-
-
-
-
