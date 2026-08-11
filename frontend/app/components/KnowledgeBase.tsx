@@ -35,7 +35,9 @@ export default function KnowledgeBase() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchStatus, setSearchStatus] = useState("");
-
+const [uploadFile, setUploadFile] = useState<File | null>(null);
+const [uploadLoading, setUploadLoading] = useState(false);
+const [uploadStatus, setUploadStatus] = useState("");
   const loadDocuments = async () => {
     setDocumentsLoading(true);
 
@@ -220,7 +222,44 @@ export default function KnowledgeBase() {
       setDeletingId(null);
     }
   };
+const uploadDocument = async () => {
+  if (!uploadFile) return;
 
+  setUploadLoading(true);
+  setUploadStatus("");
+
+  try {
+    const formData = new FormData();
+    formData.append("file", uploadFile);
+
+    const res = await fetch(`${API_BASE}/upload-document`, {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || data.status === "error") {
+      throw new Error(data.message || "Document upload failed");
+    }
+
+    setUploadStatus(
+      `✅ ${data.filename} uploaded successfully. Document #${data.document_id}`
+    );
+
+    setUploadFile(null);
+
+    await loadDocuments();
+  } catch (error) {
+    console.error("Upload document error:", error);
+
+    setUploadStatus(
+      "❌ Document upload नहीं हो पाया। Backend check करें."
+    );
+  } finally {
+    setUploadLoading(false);
+  }
+};
   const searchKnowledge = async () => {
     if (!searchQuery.trim()) return;
 
@@ -417,7 +456,60 @@ export default function KnowledgeBase() {
           )}
 
         </div>
+{/* Upload Document */}
 
+<div className="border border-gray-800 rounded-2xl p-6 bg-gray-950 mb-8">
+  <h3 className="text-xl font-semibold mb-2">
+    📄 Upload Document
+  </h3>
+
+  <p className="text-gray-400 text-sm mb-5">
+    Upload PDF, TXT or DOCX files to automatically add them
+    to the AI knowledge base.
+  </p>
+
+  <input
+    type="file"
+    accept=".pdf,.txt,.docx"
+    onChange={(e) => {
+      setUploadFile(e.target.files?.[0] || null);
+    }}
+    className="w-full bg-black border border-gray-800 rounded-xl p-4 text-gray-300"
+  />
+
+  {uploadFile && (
+    <div className="mt-4 p-4 rounded-xl bg-black border border-gray-800">
+      <p className="text-sm text-gray-400">
+        Selected file
+      </p>
+
+      <p className="text-blue-400 font-semibold mt-1">
+        {uploadFile.name}
+      </p>
+
+      <p className="text-xs text-gray-500 mt-1">
+        {(uploadFile.size / 1024).toFixed(1)} KB
+      </p>
+    </div>
+  )}
+
+  <button
+    type="button"
+    onClick={uploadDocument}
+    disabled={uploadLoading || !uploadFile}
+    className="mt-4 px-7 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 font-semibold"
+  >
+    {uploadLoading
+      ? "Uploading..."
+      : "Upload & Add to Knowledge Base →"}
+  </button>
+
+  {uploadStatus && (
+    <div className="mt-5 p-4 rounded-xl bg-gray-900 border border-gray-800 text-gray-200">
+      {uploadStatus}
+    </div>
+  )}
+</div>
         {/* Existing Documents */}
 
         <div className="mt-8 border border-gray-800 rounded-2xl p-6 bg-gray-950">

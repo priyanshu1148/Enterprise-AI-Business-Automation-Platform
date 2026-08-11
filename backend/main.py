@@ -1,4 +1,7 @@
-﻿from fastapi import FastAPI
+﻿from fastapi import FastAPI, UploadFile, File, HTTPException
+from pypdf import PdfReader
+from docx import Document as DocxDocument
+import io
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from pathlib import Path
@@ -164,7 +167,146 @@ def embedding_test():
             "status": "error",
             "message": str(e)
         }
+# Upload PDF / TXT / DOCX document
+@app.post("/upload-document")
+async def upload_document(file: UploadFile = File(...)):
+    try:
+        if not file.filename:
+            raise HTTPException(
+                status_code=400,
+                detail="File name is required"
+            )
 
+        filename = file.filename
+        extension = Path(filename).suffix.lower()
+
+        allowed_extensions = [".pdf", ".txt", ".docx"]
+
+        if extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail="Only PDF, TXT and DOCX files are supported"
+            )
+
+        file_bytes = await file.read()
+
+        if not file_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded file is empty"
+            )
+
+        # -----------------------------------
+        # Extract text
+        # -----------------------------------
+
+        if extension == ".txt":
+            content = file_bytes.decode("utf-8", errors="ignore")
+
+        elif extension == ".pdf":
+            pdf = PdfReader(io.BytesIO(file_bytes))
+
+            pages = []
+
+            for page in pdf.pages:
+                text = page.extract_text() or ""
+                pages.append(text)
+
+            content = "\n\n".join(pages)
+
+        elif extension == ".docx":
+            document = DocxDocument(io.BytesIO(file_bytes))
+
+            paragraphs = []
+
+            for paragraph in document.paragraphs:
+                text = paragraph.text.strip()
+
+                if text:
+                    paragraphs.append(text)
+
+            content = "\n\n".join(paragraphs)
+
+        # -----------------------------------
+        # Validate extracted text
+        # -----------------------------------
+
+        content = content.strip()
+
+        if not content:
+            raise HTTPException(
+                status_code=400,
+                detail="No readable text found in the uploaded file"
+            )
+
+        # -----------------------------------
+        # Create embedding
+        # -----------------------------------
+
+        result = client.models.embed_content(
+            model="gemini-embedding-2",
+            contents=content
+        )
+
+        embedding = result.embeddings[0].values
+
+        # -----------------------------------
+        # Convert embedding to pgvector format
+        # -----------------------------------
+
+        embedding_string = (
+            "[" + ",".join(map(str, embedding)) + "]"
+        )
+
+        # -----------------------------------
+        # Save to Neon PostgreSQL
+        # -----------------------------------
+
+        metadata = {
+            "source": filename,
+            "category": "uploaded-document",
+            "file_type": extension.replace(".", "").upper(),
+        }
+
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    INSERT INTO documents
+                    (content, metadata, embedding)
+                    VALUES (%s, %s, %s::vector)
+                    RETURNING id;
+                    """,
+                    (
+                        content,
+                        Jsonb(metadata),
+                        embedding_string,
+                    )
+                )
+
+                document_id = cur.fetchone()[0]
+
+            conn.commit()
+
+        return {
+            "status": "success",
+            "message": "Document uploaded successfully",
+            "document_id": document_id,
+            "filename": filename,
+            "file_type": extension.replace(".", "").upper(),
+            "characters": len(content),
+            "dimensions": len(embedding),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+        }
 
 # Add document to vector database
 @app.post("/add-document")
