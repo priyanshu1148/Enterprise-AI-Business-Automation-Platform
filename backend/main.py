@@ -202,6 +202,80 @@ def add_document(request: DocumentRequest):
             "status": "error",
             "message": str(e)
         }
+# Knowledge Base - List Documents
+@app.get("/documents")
+def get_documents():
+    try:
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, content, metadata
+                    FROM documents
+                    ORDER BY id DESC;
+                    """
+                )
+
+                rows = cur.fetchall()
+
+        documents = []
+
+        for row in rows:
+            documents.append({
+                "id": row[0],
+                "content": row[1],
+                "metadata": row[2],
+            })
+
+        return {
+            "status": "success",
+            "documents": documents,
+            "count": len(documents),
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+        }
+
+
+# Knowledge Base - Delete Document
+@app.delete("/documents/{document_id}")
+def delete_document(document_id: int):
+    try:
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM documents
+                    WHERE id = %s
+                    RETURNING id;
+                    """,
+                    (document_id,),
+                )
+
+                deleted = cur.fetchone()
+
+            conn.commit()
+
+        if not deleted:
+            return {
+                "status": "error",
+                "message": "Document not found",
+            }
+
+        return {
+            "status": "success",
+            "message": "Document deleted successfully",
+            "document_id": deleted[0],
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+        }
         # Vector similarity search
 @app.post("/search")
 def search(request: SearchRequest):
