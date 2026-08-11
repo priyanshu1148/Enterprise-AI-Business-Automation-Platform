@@ -6,13 +6,22 @@ type Message = {
   role: "user" | "assistant";
   content: string;
 };
-
+type Source = {
+  id: number;
+  metadata: {
+    source?: string;
+    category?: string;
+    file_type?: string;
+  };
+  distance: number;
+};
 const API_BASE =
   "https://enterprise-ai-business-automation.onrender.com";
 
 export default function AIChat() {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+const [sources, setSources] = useState<Source[]>([]);
   const [response, setResponse] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState("");
@@ -71,6 +80,7 @@ export default function AIChat() {
     setMessages([]);
     setMessage("");
     setResponse("");
+setSources([]);
     setLoading(false);
   };
 
@@ -153,6 +163,7 @@ export default function AIChat() {
       }
 
       const answer = data.answer || "No answer received.";
+setSources(data.sources || []);
 
       setResponse(answer);
 
@@ -307,6 +318,42 @@ export default function AIChat() {
               <p className="text-gray-200 whitespace-pre-wrap">
                 {response}
               </p>
+{sources.length > 0 && (
+  <div className="mt-5 pt-5 border-t border-gray-800">
+    <p className="text-sm text-blue-400 mb-3">
+      📚 Knowledge Sources
+    </p>
+
+    <div className="space-y-2">
+      {sources.map((source) => (
+        <div
+          key={source.id}
+          className="p-3 rounded-lg bg-black border border-gray-800"
+        >
+          <p className="text-sm text-gray-200">
+            📄 {source.metadata?.source || `Document #${source.id}`}
+          </p>
+
+          <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-500">
+            <span>
+              Document #{source.id}
+            </span>
+
+            {source.metadata?.file_type && (
+              <span>
+                {source.metadata.file_type}
+              </span>
+            )}
+
+            <span>
+              Distance: {source.distance.toFixed(3)}
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
             </div>
           )}
 
