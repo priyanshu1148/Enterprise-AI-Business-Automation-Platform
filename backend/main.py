@@ -31,6 +31,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:3001",
         "https://enterprise-ai-business-automation-p-gamma.vercel.app",
+        "https://enterprise-ai-business-automation-p.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -470,3 +471,4 @@ Current user question:
             "status": "error",
             "message": str(e)
         }
+
