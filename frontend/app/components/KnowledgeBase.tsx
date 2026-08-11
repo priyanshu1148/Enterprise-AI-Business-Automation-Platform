@@ -11,6 +11,10 @@ type Document = {
   };
 };
 
+type SearchResult = Document & {
+  distance: number;
+};
+
 const API_BASE =
   "https://enterprise-ai-business-automation.onrender.com";
 
@@ -23,6 +27,11 @@ export default function KnowledgeBase() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchStatus, setSearchStatus] = useState("");
 
   const loadDocuments = async () => {
     setDocumentsLoading(true);
@@ -122,6 +131,10 @@ export default function KnowledgeBase() {
       setDocuments((prev) =>
         prev.filter((doc) => doc.id !== documentId)
       );
+
+      setSearchResults((prev) =>
+        prev.filter((doc) => doc.id !== documentId)
+      );
     } catch (error) {
       console.error("Delete document error:", error);
       setStatus("❌ Document delete नहीं हो पाया।");
@@ -130,9 +143,52 @@ export default function KnowledgeBase() {
     }
   };
 
+  const searchKnowledge = async () => {
+    if (!searchQuery.trim()) return;
+
+    setSearchLoading(true);
+    setSearchStatus("");
+    setSearchResults([]);
+
+    try {
+      const res = await fetch(`${API_BASE}/search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: searchQuery,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || data.status === "error") {
+        throw new Error(
+          data.message || "Search failed"
+        );
+      }
+
+      setSearchResults(data.results || []);
+
+      if (!data.results?.length) {
+        setSearchStatus("No matching documents found.");
+      }
+    } catch (error) {
+      console.error("Knowledge search error:", error);
+      setSearchStatus(
+        "❌ Search नहीं हो पाया। Backend check करें."
+      );
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
   return (
     <section className="py-20 px-6">
       <div className="max-w-5xl mx-auto">
+
+        {/* Header */}
 
         <div className="text-center mb-10">
           <p className="text-blue-500 font-semibold">
@@ -144,13 +200,109 @@ export default function KnowledgeBase() {
           </h2>
 
           <p className="text-gray-400 mt-4">
-            Add and manage documents that your AI can use.
+            Add, search and manage documents that your AI can use.
           </p>
+        </div>
+
+        {/* Search */}
+
+        <div className="border border-blue-900 rounded-2xl p-6 bg-gray-950 mb-8">
+
+          <h3 className="text-xl font-semibold mb-4">
+            🔎 Search Knowledge Base
+          </h3>
+
+          <div className="flex flex-col md:flex-row gap-3">
+
+            <input
+              value={searchQuery}
+              onChange={(e) =>
+                setSearchQuery(e.target.value)
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  searchKnowledge();
+                }
+              }}
+              placeholder="Search your AI knowledge..."
+              className="flex-1 bg-black border border-gray-800 rounded-xl p-4 text-white outline-none focus:border-blue-500"
+            />
+
+            <button
+              type="button"
+              onClick={searchKnowledge}
+              disabled={
+                searchLoading || !searchQuery.trim()
+              }
+              className="px-7 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 font-semibold"
+            >
+              {searchLoading ? "Searching..." : "Search →"}
+            </button>
+
+          </div>
+
+          {searchStatus && (
+            <p className="mt-4 text-gray-400">
+              {searchStatus}
+            </p>
+          )}
+
+          {searchResults.length > 0 && (
+            <div className="mt-6 space-y-4">
+
+              <p className="text-sm text-blue-400">
+                {searchResults.length} result
+                {searchResults.length !== 1 ? "s" : ""} found
+              </p>
+
+              {searchResults.map((result) => (
+                <div
+                  key={result.id}
+                  className="border border-gray-800 rounded-xl p-5 bg-black"
+                >
+
+                  <div className="flex items-start justify-between gap-4">
+
+                    <div>
+                      <p className="text-blue-400 font-semibold">
+                        Document #{result.id}
+                      </p>
+
+                      <p className="text-sm text-gray-500 mt-1">
+                        {result.metadata?.source ||
+                          "Unknown source"}
+                      </p>
+                    </div>
+
+                    <span className="text-xs text-gray-500">
+                      Distance:{" "}
+                      {result.distance.toFixed(3)}
+                    </span>
+
+                  </div>
+
+                  <p className="mt-4 text-gray-300 whitespace-pre-wrap">
+                    {result.content}
+                  </p>
+
+                  <p className="mt-3 text-xs text-gray-600">
+                    Category:{" "}
+                    {result.metadata?.category ||
+                      "knowledge-base"}
+                  </p>
+
+                </div>
+              ))}
+
+            </div>
+          )}
+
         </div>
 
         {/* Add Document */}
 
         <div className="border border-gray-800 rounded-2xl p-6 bg-gray-950">
+
           <h3 className="text-xl font-semibold mb-5">
             Add New Document
           </h3>
@@ -185,6 +337,7 @@ export default function KnowledgeBase() {
               {status}
             </div>
           )}
+
         </div>
 
         {/* Existing Documents */}
@@ -192,6 +345,7 @@ export default function KnowledgeBase() {
         <div className="mt-8 border border-gray-800 rounded-2xl p-6 bg-gray-950">
 
           <div className="flex items-center justify-between mb-5">
+
             <h3 className="text-xl font-semibold">
               Existing Documents
             </h3>
@@ -204,6 +358,7 @@ export default function KnowledgeBase() {
             >
               ↻ Refresh
             </button>
+
           </div>
 
           {documentsLoading ? (
@@ -231,13 +386,16 @@ export default function KnowledgeBase() {
                       </p>
 
                       <p className="text-sm text-gray-500 mt-1">
-                        {doc.metadata?.source || "Unknown source"}
+                        {doc.metadata?.source ||
+                          "Unknown source"}
                       </p>
                     </div>
 
                     <button
                       type="button"
-                      onClick={() => deleteDocument(doc.id)}
+                      onClick={() =>
+                        deleteDocument(doc.id)
+                      }
                       disabled={deletingId === doc.id}
                       className="shrink-0 px-4 py-2 rounded-lg border border-red-900 text-red-400 hover:bg-red-950 disabled:opacity-50 text-sm font-semibold"
                     >
@@ -254,7 +412,8 @@ export default function KnowledgeBase() {
 
                   <p className="mt-3 text-xs text-gray-600">
                     Category:{" "}
-                    {doc.metadata?.category || "knowledge-base"}
+                    {doc.metadata?.category ||
+                      "knowledge-base"}
                   </p>
 
                 </div>
@@ -264,6 +423,7 @@ export default function KnowledgeBase() {
           )}
 
         </div>
+
       </div>
     </section>
   );
