@@ -1,13 +1,16 @@
 ﻿from fastapi import FastAPI
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from pathlib import Path
 from google import genai
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg
 import os
 from psycopg.types.json import Jsonb
-# Load .env
-load_dotenv()
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
 
 # Gemini API Key
 api_key = os.getenv("GEMINI_API_KEY")
@@ -15,14 +18,17 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY is not set in .env")
 
+
 # Gemini Client
 client = genai.Client(api_key=api_key)
+
 
 # FastAPI
 app = FastAPI(
     title="Enterprise AI Business Automation Platform",
     version="1.0.0"
 )
+
 
 # CORS
 app.add_middleware(
@@ -41,14 +47,14 @@ app.add_middleware(
 
 # Chat request model
 class ChatRequest(BaseModel):
-
-
-
-
     message: str
+
+
 class DocumentRequest(BaseModel):
     content: str
     metadata: dict = {}
+
+
 class SearchRequest(BaseModel):
     query: str
     limit: int = 3
@@ -57,12 +63,15 @@ class SearchRequest(BaseModel):
 class RagChatRequest(BaseModel):
     query: str
     session_id: str = "default"
+
+
 # Home
 @app.get("/")
 def home():
     return {
         "message": "Enterprise AI Business Automation Platform is Running"
     }
+
 
 # Test AI
 @app.get("/test-ai")
@@ -155,10 +164,13 @@ def embedding_test():
             "status": "error",
             "message": str(e)
         }
-       # Add document to vector database
+
+
+# Add document to vector database
 @app.post("/add-document")
 def add_document(request: DocumentRequest):
     try:
+
         # Create embedding
         result = client.models.embed_content(
             model="gemini-embedding-2",
@@ -173,6 +185,7 @@ def add_document(request: DocumentRequest):
         # Insert into Neon PostgreSQL
         with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
             with conn.cursor() as cur:
+
                 cur.execute(
                     """
                     INSERT INTO documents (content, metadata, embedding)
@@ -202,12 +215,16 @@ def add_document(request: DocumentRequest):
             "status": "error",
             "message": str(e)
         }
+
+
 # Knowledge Base - List Documents
 @app.get("/documents")
 def get_documents():
     try:
+
         with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
             with conn.cursor() as cur:
+
                 cur.execute(
                     """
                     SELECT id, content, metadata
@@ -240,12 +257,75 @@ def get_documents():
         }
 
 
+# Knowledge Base - Update Document
+@app.put("/documents/{document_id}")
+def update_document(document_id: int, request: DocumentRequest):
+    try:
+
+        # Create new embedding for updated content
+        result = client.models.embed_content(
+            model="gemini-embedding-2",
+            contents=request.content
+        )
+
+        embedding = result.embeddings[0].values
+
+        # Convert embedding to pgvector format
+        embedding_string = "[" + ",".join(map(str, embedding)) + "]"
+
+        # Update document in Neon PostgreSQL
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    UPDATE documents
+                    SET content = %s,
+                        metadata = %s,
+                        embedding = %s::vector
+                    WHERE id = %s
+                    RETURNING id;
+                    """,
+                    (
+                        request.content,
+                        Jsonb(request.metadata),
+                        embedding_string,
+                        document_id,
+                    )
+                )
+
+                updated = cur.fetchone()
+
+            conn.commit()
+
+        if not updated:
+            return {
+                "status": "error",
+                "message": "Document not found",
+            }
+
+        return {
+            "status": "success",
+            "message": "Document updated successfully",
+            "document_id": updated[0],
+            "dimensions": len(embedding),
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+        }
+
+
 # Knowledge Base - Delete Document
 @app.delete("/documents/{document_id}")
 def delete_document(document_id: int):
     try:
+
         with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
             with conn.cursor() as cur:
+
                 cur.execute(
                     """
                     DELETE FROM documents
@@ -276,10 +356,13 @@ def delete_document(document_id: int):
             "status": "error",
             "message": str(e),
         }
-        # Vector similarity search
+
+
+# Vector similarity search
 @app.post("/search")
 def search(request: SearchRequest):
     try:
+
         # Create embedding for user query
         result = client.models.embed_content(
             model="gemini-embedding-2",
@@ -289,11 +372,14 @@ def search(request: SearchRequest):
         query_embedding = result.embeddings[0].values
 
         # Convert to pgvector format
-        embedding_string = "[" + ",".join(map(str, query_embedding)) + "]"
+        embedding_string = "[" + ",".join(
+            map(str, query_embedding)
+        ) + "]"
 
         # Search similar documents
         with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
             with conn.cursor() as cur:
+
                 cur.execute(
                     """
                     SELECT
@@ -335,12 +421,16 @@ def search(request: SearchRequest):
             "status": "error",
             "message": str(e)
         }
+
+
 # Chat History
 @app.get("/chat-history/{session_id}")
 def chat_history(session_id: str):
     try:
+
         with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
             with conn.cursor() as cur:
+
                 cur.execute(
                     """
                     SELECT role, message, created_at
@@ -371,9 +461,13 @@ def chat_history(session_id: str):
             "status": "error",
             "message": str(e)
         }
+
+
+# RAG Chat
 @app.post("/rag-chat")
 def rag_chat(request: RagChatRequest):
     try:
+
         database_url = os.getenv("DATABASE_URL")
 
         # -----------------------------------
@@ -381,6 +475,7 @@ def rag_chat(request: RagChatRequest):
         # -----------------------------------
         with psycopg.connect(database_url) as conn:
             with conn.cursor() as cur:
+
                 cur.execute(
                     """
                     INSERT INTO chat_messages
@@ -419,6 +514,7 @@ def rag_chat(request: RagChatRequest):
             model="gemini-embedding-2",
             contents=request.query
         )
+
         query_embedding = result.embeddings[0].values
 
         embedding_string = "[" + ",".join(
@@ -430,6 +526,7 @@ def rag_chat(request: RagChatRequest):
         # -----------------------------------
         with psycopg.connect(database_url) as conn:
             with conn.cursor() as cur:
+
                 cur.execute(
                     """
                     SELECT
@@ -456,6 +553,7 @@ def rag_chat(request: RagChatRequest):
         sources = []
 
         for row in rows:
+
             context += (
                 f"Document {row[0]}:\n"
                 f"{row[1]}\n\n"
@@ -515,6 +613,7 @@ Current user question:
         # -----------------------------------
         with psycopg.connect(database_url) as conn:
             with conn.cursor() as cur:
+
                 cur.execute(
                     """
                     INSERT INTO chat_messages
@@ -545,4 +644,3 @@ Current user question:
             "status": "error",
             "message": str(e)
         }
-
