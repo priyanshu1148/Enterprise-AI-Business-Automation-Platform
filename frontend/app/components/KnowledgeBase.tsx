@@ -14,10 +14,8 @@ type Document = {
 type SearchResult = Document & {
   distance: number;
 };
-
 const API_BASE =
   "https://enterprise-ai-business-automation.onrender.com";
-
 export default function KnowledgeBase() {
   const [content, setContent] = useState("");
   const [source, setSource] = useState("");
@@ -27,6 +25,11 @@ export default function KnowledgeBase() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [editSource, setEditSource] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -100,6 +103,79 @@ export default function KnowledgeBase() {
     }
   };
 
+  const startEditing = (doc: Document) => {
+    setEditingId(doc.id);
+    setEditContent(doc.content);
+    setEditSource(doc.metadata?.source || "");
+    setStatus("");
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditContent("");
+    setEditSource("");
+  };
+
+  const updateDocument = async (documentId: number) => {
+    if (!editContent.trim()) return;
+
+    setEditLoading(true);
+    setStatus("");
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/documents/${documentId}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            content: editContent,
+            metadata: {
+              source: editSource || "website",
+              category: "knowledge-base",
+            },
+          }),
+        }
+      );
+
+      const data = await res.json();
+
+      if (!res.ok || data.status === "error") {
+        throw new Error(
+          data.message || "Document update failed"
+        );
+      }
+
+      setStatus(
+        `✅ Document #${documentId} updated successfully.`
+      );
+
+      setDocuments((prev) =>
+        prev.map((doc) =>
+          doc.id === documentId
+            ? {
+                ...doc,
+                content: editContent,
+                metadata: {
+                  source: editSource || "website",
+                  category: "knowledge-base",
+                },
+              }
+            : doc
+        )
+      );
+
+      cancelEditing();
+    } catch (error) {
+      console.error("Update document error:", error);
+      setStatus("❌ Document update नहीं हो पाया।");
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   const deleteDocument = async (documentId: number) => {
     const confirmed = window.confirm(
       `Delete document #${documentId}?`
@@ -121,7 +197,9 @@ export default function KnowledgeBase() {
       const data = await res.json();
 
       if (!res.ok || data.status === "error") {
-        throw new Error(data.message || "Document delete failed");
+        throw new Error(
+          data.message || "Document delete failed"
+        );
       }
 
       setStatus(
@@ -200,7 +278,7 @@ export default function KnowledgeBase() {
           </h2>
 
           <p className="text-gray-400 mt-4">
-            Add, search and manage documents that your AI can use.
+            Add, search, edit and manage documents that your AI can use.
           </p>
         </div>
 
@@ -378,43 +456,135 @@ export default function KnowledgeBase() {
                   className="border border-gray-800 rounded-xl p-5 bg-black"
                 >
 
-                  <div className="flex items-start justify-between gap-4">
+                  {editingId === doc.id ? (
+                    /* Edit Form */
 
                     <div>
-                      <p className="text-blue-400 font-semibold">
-                        Document #{doc.id}
-                      </p>
+                      <div className="flex items-center justify-between mb-4">
 
-                      <p className="text-sm text-gray-500 mt-1">
-                        {doc.metadata?.source ||
-                          "Unknown source"}
-                      </p>
+                        <p className="text-blue-400 font-semibold">
+                          Edit Document #{doc.id}
+                        </p>
+
+                        <button
+                          type="button"
+                          onClick={cancelEditing}
+                          disabled={editLoading}
+                          className="text-sm text-gray-400 hover:text-white"
+                        >
+                          Cancel
+                        </button>
+
+                      </div>
+
+                      <input
+                        value={editSource}
+                        onChange={(e) =>
+                          setEditSource(e.target.value)
+                        }
+                        placeholder="Source name"
+                        className="w-full mb-4 bg-gray-950 border border-gray-800 rounded-xl p-4 text-white outline-none focus:border-blue-500"
+                      />
+
+                      <textarea
+                        value={editContent}
+                        onChange={(e) =>
+                          setEditContent(e.target.value)
+                        }
+                        className="w-full min-h-[220px] bg-gray-950 border border-gray-800 rounded-xl p-4 text-white outline-none focus:border-blue-500"
+                      />
+
+                      <div className="flex flex-wrap gap-3 mt-4">
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateDocument(doc.id)
+                          }
+                          disabled={
+                            editLoading ||
+                            !editContent.trim()
+                          }
+                          className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 font-semibold"
+                        >
+                          {editLoading
+                            ? "Saving..."
+                            : "Save Changes →"}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={cancelEditing}
+                          disabled={editLoading}
+                          className="px-6 py-3 rounded-xl border border-gray-700 hover:bg-gray-900 disabled:opacity-50 font-semibold"
+                        >
+                          Cancel
+                        </button>
+
+                      </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        deleteDocument(doc.id)
-                      }
-                      disabled={deletingId === doc.id}
-                      className="shrink-0 px-4 py-2 rounded-lg border border-red-900 text-red-400 hover:bg-red-950 disabled:opacity-50 text-sm font-semibold"
-                    >
-                      {deletingId === doc.id
-                        ? "Deleting..."
-                        : "Delete"}
-                    </button>
+                  ) : (
 
-                  </div>
+                    /* Normal Document View */
 
-                  <p className="mt-4 text-gray-300 whitespace-pre-wrap">
-                    {doc.content}
-                  </p>
+                    <>
+                      <div className="flex items-start justify-between gap-4">
 
-                  <p className="mt-3 text-xs text-gray-600">
-                    Category:{" "}
-                    {doc.metadata?.category ||
-                      "knowledge-base"}
-                  </p>
+                        <div>
+                          <p className="text-blue-400 font-semibold">
+                            Document #{doc.id}
+                          </p>
+
+                          <p className="text-sm text-gray-500 mt-1">
+                            {doc.metadata?.source ||
+                              "Unknown source"}
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              startEditing(doc)
+                            }
+                            disabled={deletingId === doc.id}
+                            className="px-4 py-2 rounded-lg border border-blue-900 text-blue-400 hover:bg-blue-950 disabled:opacity-50 text-sm font-semibold"
+                          >
+                            ✏️ Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              deleteDocument(doc.id)
+                            }
+                            disabled={
+                              deletingId === doc.id
+                            }
+                            className="px-4 py-2 rounded-lg border border-red-900 text-red-400 hover:bg-red-950 disabled:opacity-50 text-sm font-semibold"
+                          >
+                            {deletingId === doc.id
+                              ? "Deleting..."
+                              : "Delete"}
+                          </button>
+
+                        </div>
+
+                      </div>
+
+                      <p className="mt-4 text-gray-300 whitespace-pre-wrap">
+                        {doc.content}
+                      </p>
+
+                      <p className="mt-3 text-xs text-gray-600">
+                        Category:{" "}
+                        {doc.metadata?.category ||
+                          "knowledge-base"}
+                      </p>
+                    </>
+                  )}
 
                 </div>
               ))}
