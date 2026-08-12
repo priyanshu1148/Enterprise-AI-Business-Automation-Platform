@@ -170,7 +170,97 @@ def embedding_test():
 
 # Upload PDF / TXT / DOCX document
 # Upload PDF / TXT / DOCX document
+# -----------------------------------
+# Get all documents
+# -----------------------------------
 
+@app.get("/documents")
+def get_documents():
+    try:
+        database_url = os.getenv("DATABASE_URL")
+
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        content,
+                        metadata
+                    FROM documents
+                    ORDER BY id DESC;
+                    """
+                )
+
+                rows = cur.fetchall()
+
+        documents = []
+
+        for row in rows:
+            documents.append({
+                "id": row[0],
+                "content": row[1],
+                "metadata": row[2],
+            })
+
+        return {
+            "status": "success",
+            "documents": documents,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+        }
+
+
+# -----------------------------------
+# Upload PDF / TXT / DOCX document
+# -----------------------------------
+# -----------------------------------
+# Get all documents
+# -----------------------------------
+
+@app.get("/documents")
+def get_documents():
+    try:
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    SELECT id, content, metadata
+                    FROM documents
+                    ORDER BY id DESC;
+                    """
+                )
+
+                rows = cur.fetchall()
+
+        documents = []
+
+        for row in rows:
+            document_id, content, metadata = row
+
+            documents.append({
+                "id": document_id,
+                "content": content,
+                "metadata": metadata or {}
+            })
+
+        return {
+            "status": "success",
+            "documents": documents,
+            "count": len(documents)
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 @app.post("/upload-document")
 async def upload_document(file: UploadFile = File(...)):
     try:
@@ -336,4 +426,198 @@ async def upload_document(file: UploadFile = File(...)):
         return {
             "status": "error",
             "message": str(e),
+        }
+
+# -----------------------------------
+# RAG Chat
+# -----------------------------------
+
+@app.post("/rag-chat")
+def rag_chat(request: RagChatRequest):
+    try:
+        database_url = os.getenv("DATABASE_URL")
+
+        # -----------------------------------
+        # 1. Save user message
+        # -----------------------------------
+
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    INSERT INTO chat_messages
+                    (session_id, role, message)
+                    VALUES (%s, %s, %s);
+                    """,
+                    (
+                        request.session_id,
+                        "user",
+                        request.query
+                    )
+                )
+
+                # -----------------------------------
+                # 2. Get previous conversation
+                # -----------------------------------
+
+                cur.execute(
+                    """
+                    SELECT role, message
+                    FROM chat_messages
+                    WHERE session_id = %s
+                    ORDER BY created_at ASC
+                    LIMIT 20;
+                    """,
+                    (request.session_id,)
+                )
+
+                history_rows = cur.fetchall()
+
+            conn.commit()
+
+        # -----------------------------------
+        # 3. Create embedding
+        # -----------------------------------
+
+        result = client.models.embed_content(
+            model="gemini-embedding-2",
+            contents=request.query
+        )
+
+        query_embedding = result.embeddings[0].values
+
+        embedding_string = (
+            "[" + ",".join(map(str, query_embedding)) + "]"
+        )
+
+        # -----------------------------------
+        # 4. Search relevant documents
+        # -----------------------------------
+
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        content,
+                        metadata,
+                        embedding <=> %s::vector AS distance
+                    FROM documents
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT 3;
+                    """,
+                    (
+                        embedding_string,
+                        embedding_string
+                    )
+                )
+
+                rows = cur.fetchall()
+
+        # -----------------------------------
+        # 5. Build RAG context
+        # -----------------------------------
+
+        context = ""
+        sources = []
+
+        for row in rows:
+
+            context += (
+                f"Document {row[0]}:\n"
+                f"{row[1]}\n\n"
+            )
+
+            sources.append({
+                "id": row[0],
+                "metadata": row[2],
+                "distance": float(row[3])
+            })
+
+        # -----------------------------------
+        # 6. Build conversation history
+        # -----------------------------------
+
+        conversation_history = ""
+
+        for role, message in history_rows:
+            conversation_history += (
+                f"{role}: {message}\n"
+            )
+
+        # -----------------------------------
+        # 7. Send memory + RAG context to Gemini
+        # -----------------------------------
+
+        prompt = f"""
+You are an AI assistant for the Enterprise AI Business Automation Platform.
+
+Use the provided documents and conversation history to answer the user's question.
+
+Rules:
+
+- Use the documents as the primary source of business knowledge.
+- Use conversation history to understand previous messages.
+- If the documents do not contain enough information, say:
+  "I don't have enough information in the provided documents."
+- Do not invent company-specific information.
+- Be clear and helpful.
+
+Conversation history:
+{conversation_history}
+
+Relevant documents:
+{context}
+
+Current user question:
+{request.query}
+"""
+
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt
+        )
+
+        answer = response.text
+
+        # -----------------------------------
+        # 8. Save AI response
+        # -----------------------------------
+
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    INSERT INTO chat_messages
+                    (session_id, role, message)
+                    VALUES (%s, %s, %s);
+                    """,
+                    (
+                        request.session_id,
+                        "assistant",
+                        answer
+                    )
+                )
+
+            conn.commit()
+
+        # -----------------------------------
+        # 9. Return response
+        # -----------------------------------
+
+        return {
+            "status": "success",
+            "answer": answer,
+            "sources": sources,
+            "session_id": request.session_id
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
         }
