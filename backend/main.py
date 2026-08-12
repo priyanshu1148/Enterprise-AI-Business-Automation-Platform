@@ -738,6 +738,113 @@ Current user question:
             "message": str(e)
         }
 # -----------------------------------
+# Add document manually
+# -----------------------------------
+
+@app.post("/add-document")
+def add_document(request: dict):
+    try:
+        content = request.get("content", "").strip()
+        metadata = request.get("metadata", {})
+
+        if not content:
+            raise HTTPException(
+                status_code=400,
+                detail="Document content is required"
+            )
+
+        # Check duplicate document
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    SELECT id, metadata
+                    FROM documents
+                    WHERE content = %s
+                    LIMIT 1;
+                    """,
+                    (content,)
+                )
+
+                existing_document = cur.fetchone()
+
+        if existing_document:
+            return {
+                "status": "duplicate",
+                "message": "This document already exists in the knowledge base.",
+                "document_id": existing_document[0],
+                "metadata": existing_document[1],
+            }
+
+        # Create embedding
+        result = client.models.embed_content(
+            model="gemini-embedding-2",
+            contents=content
+        )
+
+        embedding = result.embeddings[0].values
+
+        # Convert embedding to pgvector format
+        embedding_string = (
+            "[" + ",".join(map(str, embedding)) + "]"
+        )
+
+        # Default metadata
+        if not metadata:
+            metadata = {
+                "source": "website",
+                "category": "knowledge-base"
+            }
+
+        # Save document to Neon PostgreSQL
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    INSERT INTO documents
+                    (content, metadata, embedding)
+                    VALUES (%s, %s, %s::vector)
+                    RETURNING id;
+                    """,
+                    (
+                        content,
+                        Jsonb(metadata),
+                        embedding_string,
+                    )
+                )
+
+                document_id = cur.fetchone()[0]
+
+            conn.commit()
+
+        return {
+            "status": "success",
+            "message": "Document added successfully",
+            "document_id": document_id,
+            "characters": len(content),
+            "dimensions": len(embedding),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+# -----------------------------------
+
+# Update document
+
+# -----------------------------------
+
+@app.put("/documents/{document_id}")
+# -----------------------------------
 # Update document
 # -----------------------------------
 
