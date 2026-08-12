@@ -427,7 +427,123 @@ async def upload_document(file: UploadFile = File(...)):
             "status": "error",
             "message": str(e),
         }
+# -----------------------------------
+# Update document
+# -----------------------------------
 
+@app.put("/documents/{document_id}")
+def update_document(document_id: int, request: dict):
+    try:
+        content = request.get("content", "").strip()
+        metadata = request.get("metadata", {})
+
+        if not content:
+            raise HTTPException(
+                status_code=400,
+                detail="Document content is required"
+            )
+
+        # Create new embedding
+        result = client.models.embed_content(
+            model="gemini-embedding-2",
+            contents=content
+        )
+
+        embedding = result.embeddings[0].values
+
+        embedding_string = (
+            "[" + ",".join(map(str, embedding)) + "]"
+        )
+
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    UPDATE documents
+                    SET content = %s,
+                        metadata = %s,
+                        embedding = %s::vector
+                    WHERE id = %s
+                    RETURNING id;
+                    """,
+                    (
+                        content,
+                        Jsonb(metadata),
+                        embedding_string,
+                        document_id,
+                    )
+                )
+
+                updated = cur.fetchone()
+
+            conn.commit()
+
+        if not updated:
+            raise HTTPException(
+                status_code=404,
+                detail="Document not found"
+            )
+
+        return {
+            "status": "success",
+            "message": "Document updated successfully",
+            "document_id": document_id,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+        }
+
+
+# -----------------------------------
+# Delete document
+# -----------------------------------
+
+@app.delete("/documents/{document_id}")
+def delete_document(document_id: int):
+    try:
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    DELETE FROM documents
+                    WHERE id = %s
+                    RETURNING id;
+                    """,
+                    (document_id,)
+                )
+
+                deleted = cur.fetchone()
+
+            conn.commit()
+
+        if not deleted:
+            raise HTTPException(
+                status_code=404,
+                detail="Document not found"
+            )
+
+        return {
+            "status": "success",
+            "message": "Document deleted successfully",
+            "document_id": document_id,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+        }
 # -----------------------------------
 # RAG Chat
 # -----------------------------------
@@ -614,6 +730,118 @@ Current user question:
             "answer": answer,
             "sources": sources,
             "session_id": request.session_id
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+# -----------------------------------
+# Update document
+# -----------------------------------
+
+@app.put("/documents/{document_id}")
+def update_document(document_id: int, request: dict):
+    try:
+        content = request.get("content", "").strip()
+        metadata = request.get("metadata", {})
+
+        if not content:
+            return {
+                "status": "error",
+                "message": "Document content is required"
+            }
+
+        # Create new embedding for updated content
+        result = client.models.embed_content(
+            model="gemini-embedding-2",
+            contents=content
+        )
+
+        embedding = result.embeddings[0].values
+
+        embedding_string = (
+            "[" + ",".join(map(str, embedding)) + "]"
+        )
+
+        # Update document in Neon PostgreSQL
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    UPDATE documents
+                    SET content = %s,
+                        metadata = %s,
+                        embedding = %s::vector
+                    WHERE id = %s
+                    RETURNING id;
+                    """,
+                    (
+                        content,
+                        Jsonb(metadata),
+                        embedding_string,
+                        document_id
+                    )
+                )
+
+                updated = cur.fetchone()
+
+            conn.commit()
+
+        if not updated:
+            return {
+                "status": "error",
+                "message": "Document not found"
+            }
+
+        return {
+            "status": "success",
+            "message": "Document updated successfully",
+            "document_id": document_id
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+# -----------------------------------
+# Delete document
+# -----------------------------------
+
+@app.delete("/documents/{document_id}")
+def delete_document(document_id: int):
+    try:
+        with psycopg.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    DELETE FROM documents
+                    WHERE id = %s
+                    RETURNING id;
+                    """,
+                    (document_id,)
+                )
+
+                deleted = cur.fetchone()
+
+            conn.commit()
+
+        if not deleted:
+            return {
+                "status": "error",
+                "message": "Document not found"
+            }
+
+        return {
+            "status": "success",
+            "message": "Document deleted successfully",
+            "document_id": document_id
         }
 
     except Exception as e:
