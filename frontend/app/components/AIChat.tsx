@@ -6,22 +6,24 @@ type Message = {
   role: "user" | "assistant";
   content: string;
 };
+
 type Source = {
   id: number;
-  metadata: {
+  metadata?: {
     source?: string;
     category?: string;
     file_type?: string;
   };
-  distance: number;
+  distance?: number;
 };
+
 const API_BASE =
   "https://enterprise-ai-business-automation.onrender.com";
 
 export default function AIChat() {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
-const [sources, setSources] = useState<Source[]>([]);
+  const [sources, setSources] = useState<Source[]>([]);
   const [response, setResponse] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState("");
@@ -30,6 +32,10 @@ const [sources, setSources] = useState<Source[]>([]);
   useEffect(() => {
     loadChatHistory();
   }, []);
+
+  // -----------------------------------------
+  // Load chat history
+  // -----------------------------------------
 
   const loadChatHistory = async () => {
     let id = localStorage.getItem("ai_session_id");
@@ -46,43 +52,72 @@ const [sources, setSources] = useState<Source[]>([]);
         `${API_BASE}/chat-history/${id}`
       );
 
+      if (!res.ok) {
+        console.log("Chat history unavailable");
+        return;
+      }
+
       const data = await res.json();
 
       if (data.status === "success") {
-        const history = data.messages.map((item: any) => ({
-          role: item.role === "user" ? "user" : "assistant",
-          content: item.content,
-        }));
+        const history: Message[] = (data.messages || []).map(
+          (item: any) => ({
+            role:
+              item.role === "user"
+                ? "user"
+                : "assistant",
+            content:
+              item.content ||
+              item.message ||
+              "",
+          })
+        );
 
         setMessages(history);
 
         const lastAssistant = [...history]
           .reverse()
-          .find((item) => item.role === "assistant");
+          .find(
+            (item) => item.role === "assistant"
+          );
 
         if (lastAssistant) {
           setResponse(lastAssistant.content);
         }
       }
     } catch (error) {
-      console.error("Chat history error:", error);
+      console.error(
+        "Chat history error:",
+        error
+      );
     }
   };
+
+  // -----------------------------------------
+  // New chat
+  // -----------------------------------------
 
   const newChat = () => {
     window.speechSynthesis?.cancel();
 
     const newId = crypto.randomUUID();
 
-    localStorage.setItem("ai_session_id", newId);
+    localStorage.setItem(
+      "ai_session_id",
+      newId
+    );
 
     setSessionId(newId);
     setMessages([]);
     setMessage("");
     setResponse("");
-setSources([]);
+    setSources([]);
     setLoading(false);
   };
+
+  // -----------------------------------------
+  // Voice input
+  // -----------------------------------------
 
   const startVoiceInput = () => {
     const SpeechRecognition =
@@ -90,11 +125,14 @@ setSources([]);
       (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert("Voice input is not supported in this browser.");
+      alert(
+        "Voice input is not supported in this browser."
+      );
       return;
     }
 
-    const recognition = new SpeechRecognition();
+    const recognition =
+      new SpeechRecognition();
 
     recognition.lang = "en-IN";
     recognition.continuous = false;
@@ -102,16 +140,22 @@ setSources([]);
 
     setListening(true);
 
-    recognition.onresult = (event: any) => {
-      setMessage(event.results[0][0].transcript);
+    recognition.onresult = (
+      event: any
+    ) => {
+      const transcript =
+        event.results[0][0].transcript;
+
+      setMessage(transcript);
     };
 
-    recognition.onerror = (event: any) => {
-      console.log("Voice input:", event.error);
-
-      if (event.error === "no-speech") {
-        setMessage("");
-      }
+    recognition.onerror = (
+      event: any
+    ) => {
+      console.log(
+        "Voice input:",
+        event.error
+      );
 
       setListening(false);
     };
@@ -123,32 +167,53 @@ setSources([]);
     recognition.start();
   };
 
+  // -----------------------------------------
+  // Send message to backend
+  // -----------------------------------------
+
   const sendMessage = async () => {
     const query = message.trim();
 
-    if (!query || !sessionId || loading) return;
+    if (
+      !query ||
+      !sessionId ||
+      loading
+    ) {
+      return;
+    }
 
     setLoading(true);
     setResponse("");
+    setSources([]);
 
     const userMessage: Message = {
       role: "user",
       content: query,
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages((prev) => [
+      ...prev,
+      userMessage,
+    ]);
+
     setMessage("");
 
     try {
+      console.log(
+        "Sending request to:",
+        `${API_BASE}/rag-chat`
+      );
+
       const res = await fetch(
         `${API_BASE}/rag-chat`,
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
           body: JSON.stringify({
-            query,
+            query: query,
             session_id: sessionId,
           }),
         }
@@ -156,16 +221,38 @@ setSources([]);
 
       const data = await res.json();
 
-      if (!res.ok || data.status === "error") {
+      console.log(
+        "Backend response:",
+        data
+      );
+
+      if (!res.ok) {
         throw new Error(
-          data.message || "Something went wrong"
+          data?.detail ||
+            data?.message ||
+            `HTTP ${res.status}`
         );
       }
 
-      const answer = data.answer || "No answer received.";
-setSources(data.sources || []);
+      if (data.status === "error") {
+        throw new Error(
+          data.message ||
+            "Backend returned an error."
+        );
+      }
+
+      const answer =
+        data.answer ||
+        data.response ||
+        "No answer received.";
 
       setResponse(answer);
+
+      setSources(
+        Array.isArray(data.sources)
+          ? data.sources
+          : []
+      );
 
       setMessages((prev) => [
         ...prev,
@@ -175,18 +262,30 @@ setSources(data.sources || []);
         },
       ]);
 
-      if ("speechSynthesis" in window) {
+      // Text-to-speech
+      if (
+        "speechSynthesis" in window
+      ) {
         window.speechSynthesis.cancel();
 
-        const speech = new SpeechSynthesisUtterance(answer);
+        const speech =
+          new SpeechSynthesisUtterance(
+            answer
+          );
+
         speech.lang = "en-IN";
         speech.rate = 1;
         speech.pitch = 1;
 
-        window.speechSynthesis.speak(speech);
+        window.speechSynthesis.speak(
+          speech
+        );
       }
     } catch (error) {
-      console.error("RAG Chat Error:", error);
+      console.error(
+        "RAG Chat Error:",
+        error
+      );
 
       const errorMessage =
         "AI से connect नहीं हो पाया। Backend check करें.";
@@ -205,9 +304,31 @@ setSources(data.sources || []);
     }
   };
 
+  // -----------------------------------------
+  // Enter key
+  // -----------------------------------------
+
+  const handleKeyDown = (
+    event: React.KeyboardEvent<HTMLTextAreaElement>
+  ) => {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey
+    ) {
+      event.preventDefault();
+      sendMessage();
+    }
+  };
+
+  // -----------------------------------------
+  // UI
+  // -----------------------------------------
+
   return (
     <section className="py-24 bg-black text-white">
       <div className="max-w-6xl mx-auto px-6">
+
+        {/* Header */}
 
         <div className="text-center mb-12">
           <p className="text-blue-500 font-semibold">
@@ -223,7 +344,11 @@ setSources(data.sources || []);
           </p>
         </div>
 
+        {/* Chat box */}
+
         <div className="border border-gray-800 rounded-2xl p-5 bg-gray-950">
+
+          {/* Session header */}
 
           <div className="flex justify-between items-center mb-4">
             <p className="text-gray-400 text-sm">
@@ -239,39 +364,50 @@ setSources(data.sources || []);
             </button>
           </div>
 
+          {/* Messages */}
+
           {messages.length > 0 && (
             <div className="mb-5 space-y-3 max-h-[420px] overflow-y-auto pr-2">
 
-              {messages.map((item, index) => (
-                <div
-                  key={index}
-                  className={`rounded-xl p-4 border ${
-                    item.role === "user"
-                      ? "bg-blue-600/10 border-blue-500/30"
-                      : "bg-gray-900 border-gray-800"
-                  }`}
-                >
-                  <p className="text-xs text-blue-400 mb-1">
-                    {item.role === "user"
-                      ? "You"
-                      : "AI Assistant"}
-                  </p>
+              {messages.map(
+                (item, index) => (
+                  <div
+                    key={index}
+                    className={`rounded-xl p-4 border ${
+                      item.role === "user"
+                        ? "bg-blue-600/10 border-blue-500/30"
+                        : "bg-gray-900 border-gray-800"
+                    }`}
+                  >
+                    <p className="text-xs text-blue-400 mb-1">
+                      {item.role === "user"
+                        ? "You"
+                        : "AI Assistant"}
+                    </p>
 
-                  <p className="text-gray-200 whitespace-pre-wrap">
-                    {item.content}
-                  </p>
-                </div>
-              ))}
+                    <p className="text-gray-200 whitespace-pre-wrap">
+                      {item.content}
+                    </p>
+                  </div>
+                )
+              )}
 
             </div>
           )}
 
+          {/* Input */}
+
           <textarea
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            onChange={(e) =>
+              setMessage(e.target.value)
+            }
+            onKeyDown={handleKeyDown}
             placeholder="Ask something..."
             className="w-full min-h-[140px] bg-black border border-gray-800 rounded-xl p-4 text-white outline-none focus:border-blue-500"
           />
+
+          {/* Buttons */}
 
           <div className="flex flex-wrap gap-3 mt-4">
 
@@ -289,7 +425,11 @@ setSources(data.sources || []);
             <button
               type="button"
               onClick={sendMessage}
-              disabled={loading || !sessionId}
+              disabled={
+                loading ||
+                !sessionId ||
+                !message.trim()
+              }
               className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 font-semibold"
             >
               {loading
@@ -309,8 +449,11 @@ setSources(data.sources || []);
 
           </div>
 
+          {/* Latest response */}
+
           {response && (
             <div className="mt-6 p-5 rounded-xl bg-gray-900 border border-gray-800">
+
               <p className="text-sm text-blue-400 mb-2">
                 Latest AI Response
               </p>
@@ -318,42 +461,70 @@ setSources(data.sources || []);
               <p className="text-gray-200 whitespace-pre-wrap">
                 {response}
               </p>
-{sources.length > 0 && (
-  <div className="mt-5 pt-5 border-t border-gray-800">
-    <p className="text-sm text-blue-400 mb-3">
-      📚 Knowledge Sources
-    </p>
 
-    <div className="space-y-2">
-      {sources.map((source) => (
-        <div
-          key={source.id}
-          className="p-3 rounded-lg bg-black border border-gray-800"
-        >
-          <p className="text-sm text-gray-200">
-            📄 {source.metadata?.source || `Document #${source.id}`}
-          </p>
+              {/* Sources */}
 
-          <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-500">
-            <span>
-              Document #{source.id}
-            </span>
+              {sources.length > 0 && (
+                <div className="mt-5 pt-5 border-t border-gray-800">
 
-            {source.metadata?.file_type && (
-              <span>
-                {source.metadata.file_type}
-              </span>
-            )}
+                  <p className="text-sm text-blue-400 mb-3">
+                    📚 Knowledge Sources
+                  </p>
 
-            <span>
-              Distance: {source.distance.toFixed(3)}
-            </span>
-          </div>
-        </div>
-      ))}
-    </div>
-  </div>
-)}
+                  <div className="space-y-2">
+
+                    {sources.map(
+                      (source) => (
+                        <div
+                          key={source.id}
+                          className="p-3 rounded-lg bg-black border border-gray-800"
+                        >
+
+                          <p className="text-sm text-gray-200">
+                            📄{" "}
+                            {source.metadata?.source ||
+                              `Document #${source.id}`}
+                          </p>
+
+                          <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-500">
+
+                            <span>
+                              Document #
+                              {source.id}
+                            </span>
+
+                            {source.metadata
+                              ?.file_type && (
+                              <span>
+                                {
+                                  source
+                                    .metadata
+                                    .file_type
+                                }
+                              </span>
+                            )}
+
+                            {typeof source.distance ===
+                              "number" && (
+                              <span>
+                                Distance:{" "}
+                                {source.distance.toFixed(
+                                  3
+                                )}
+                              </span>
+                            )}
+
+                          </div>
+
+                        </div>
+                      )
+                    )}
+
+                  </div>
+
+                </div>
+              )}
+
             </div>
           )}
 
