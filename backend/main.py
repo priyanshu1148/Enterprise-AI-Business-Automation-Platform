@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI, UploadFile, File, HTTPException
+﻿from fastapi import FastAPI, HTTPException, UploadFile, File
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 import io
@@ -14,7 +14,9 @@ from psycopg.types.json import Jsonb
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-
+# Agent imports MUST come after .env is loaded
+from backend.agent.engine import agent_engine
+from backend.agent.schemas import AgentRequest
 # Gemini API Key
 api_key = os.getenv("GEMINI_API_KEY")
 
@@ -950,6 +952,40 @@ def delete_document(document_id: int):
             "message": "Document deleted successfully",
             "document_id": document_id
         }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+# -----------------------------------
+# AI Agent API
+# -----------------------------------
+
+@app.post("/agent")
+def run_agent(request: AgentRequest):
+
+    try:
+        result = agent_engine.run(request)
+
+        return result.model_dump()
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "session_id": request.session_id
+        }
+# -----------------------------------
+# AI AGENT
+# -----------------------------------
+
+@app.post("/agent/run")
+def run_agent(request: AgentRequest):
+    try:
+        result = agent_engine.run(request)
+
+        return result.model_dump()
 
     except Exception as e:
         return {
